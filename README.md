@@ -64,3 +64,18 @@ pyinstaller LOL-centinela.spec
 ```
 
 El build queda en `dist/LOL-centinela/`.
+
+⚠️ Si tu Python es una distribución no estándar (ej. Laragon), PyInstaller
+puede tirar `WARNING: tkinter installation is broken. It will be excluded` y
+armar un `.exe` que crashea al abrir (`ModuleNotFoundError: No module named
+'tkinter'`) aunque `import tkinter` funcione bien normalmente. Si te pasa,
+seteá `TCL_LIBRARY`/`TK_LIBRARY` apuntando a las carpetas `tcl8.6`/`tk8.6` de
+tu instalación de Python antes de compilar:
+
+```powershell
+$env:TCL_LIBRARY = "<ruta a tu Python>\tcl\tcl8.6"
+$env:TK_LIBRARY = "<ruta a tu Python>\tcl\tk8.6"
+pyinstaller LOL-centinela.spec --noconfirm
+```
+
+Después de compilar, probá que la ventana abra antes de repartir el `.exe`.
