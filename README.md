@@ -3,7 +3,8 @@
 App de escritorio (GUI, `customtkinter`) que reemplaza el flujo manual de captura:
 se conecta al cliente de League of Legends (LCU) mientras jugás, detecta fin de
 partida (o modo espectador en vivo), limpia el JSON crudo y lo sube directo a
-Supabase — sin exportar nada a mano.
+Supabase — sin exportar nada a mano, y sin que el usuario tenga que configurar
+nada.
 
 Usada por la comunidad **DRS** para cargar estadísticas de sus torneos
 ([TorneosDRS-Stats](https://github.com/LordKrymer/TorneosDRS-Stats)). Basada en
@@ -12,8 +13,8 @@ Usada por la comunidad **DRS** para cargar estadísticas de sus torneos
 ## Descargar
 
 Últimos builds en [Releases](../../releases) — bajate el `.zip`, descomprimilo
-y corré `LOL-centinela.exe`. Completá `.env` (copiá `.env.example`) con el
-`SUPABASE_TOURNAMENT_ID` del torneo en el que estés jugando antes de abrirlo.
+y corré `LOL-centinela.exe`. No hace falta configurar nada: se conecta sola
+al cliente de LoL y sube al torneo que esté marcado como activo.
 
 ## Arquitectura del upload
 
@@ -25,6 +26,11 @@ solo necesita la **publishable key**, que es pública por diseño — por eso
 está hardcodeada como constante en el propio archivo (`SUPABASE_URL`,
 `SUPABASE_PUBLISHABLE_KEY`) en vez de pedirle a cada usuario que configure
 credenciales. Ningún secreto viaja en el `.exe` que se reparte al equipo.
+
+El `Tournament.id` a usar tampoco lo configura nadie: `fetch_active_tournament_id()`
+le pregunta a Supabase cuál es el torneo activo en cada upload. Si no hay
+ninguno activo en ese momento, el upload se salta con un log claro en vez de
+romper.
 
 Si necesitás redeployar la función después de tocarla:
 
@@ -42,21 +48,18 @@ aplica acá.)
 python -m venv .venv
 .venv/Scripts/activate   # o source .venv/bin/activate en mac/linux
 pip install -r requirements.txt
-cp .env.example .env     # completar SUPABASE_TOURNAMENT_ID
 python main.py
 ```
 
-`SUPABASE_TOURNAMENT_ID` es el `Tournament.id` al que se van a asociar las
-partidas que capture esta instancia — un `.env` por torneo/evento. No es
-sensible (es solo un número), así que cada usuario puede tener el suyo al
-lado del `.exe` sin ningún riesgo si se comparte o se pierde.
+Para uso manual/batch desde la CLI (`python upload_match_to_supabase.py
+--json archivo.json`), `--tournament-id` existe como override opcional si
+querés apuntar a un torneo puntual en vez del activo.
 
 ## Compilar el .exe
 
 `LOL-centinela.spec` no empaqueta ningún `.env` (`datas` solo lleva el
-ícono) — no hace falta, porque el script no tiene secretos que proteger.
-Cada usuario pone su propio `.env` (con su `SUPABASE_TOURNAMENT_ID`) al lado
-del `.exe` compilado, sin necesidad de recompilar por evento.
+ícono) — no hace falta, el script no tiene secretos ni configuración que
+proteger. El `.exe` funciona standalone apenas se abre.
 
 ```bash
 pip install pyinstaller

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -18,35 +17,35 @@ DEFAULT_JSON_PATH = ROOT / "resources" / "example.json"
 SUPABASE_URL = "https://hbclvfrhfdekjstcrlas.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_pLhDMr63Rpxal_uefPZjIg_ecpe_SXF"
 UPLOAD_FUNCTION_URL = f"{SUPABASE_URL}/functions/v1/upload-match"
+ACTIVE_TOURNAMENT_URL = f"{SUPABASE_URL}/rest/v1/Tournament?select=id&active=eq.true&limit=1"
 
 
 class JsonUploaderError(RuntimeError):
     pass
 
 
-def load_dotenv(path: Path) -> None:
-    if not path.exists():
-        return
-
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
-
-
-def require_int_env(name: str) -> int:
-    value = os.getenv(name)
-    if not value:
-        raise JsonUploaderError(f"Missing required environment variable: {name}")
+def fetch_active_tournament_id() -> int:
+    """Torneo activo segun Supabase -- los usuarios finales (0 tecnicos) no
+    configuran ningun id a mano, la app lo resuelve sola en cada upload."""
+    request = urllib.request.Request(
+        ACTIVE_TOURNAMENT_URL,
+        headers={"apikey": SUPABASE_PUBLISHABLE_KEY},
+    )
     try:
-        return int(value)
-    except ValueError as exc:
-        raise JsonUploaderError(f"Environment variable {name} must be an integer.") from exc
+        with urllib.request.urlopen(request, timeout=15) as response:
+            rows = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise JsonUploaderError(
+            f"No se pudo consultar el torneo activo ({exc.code}): {detail}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise JsonUploaderError(f"No se pudo conectar con Supabase: {exc.reason}") from exc
+
+    if not rows:
+        raise JsonUploaderError("No hay ningun torneo activo en este momento.")
+
+    return int(rows[0]["id"])
 
 
 def read_matches(path: Path) -> list[dict[str, Any]]:
@@ -144,11 +143,10 @@ async def upload_match_json(
         payload_to_upload = reduced_match_payload
 
     def upload() -> tuple[str, int, bool]:
-        load_dotenv(ROOT / ".env")
         try:
             return upload_match(
                 match_payload=payload_to_upload,
-                tournament_id=require_int_env("SUPABASE_TOURNAMENT_ID"),
+                tournament_id=fetch_active_tournament_id(),
                 strict_teams=False,
             )
         except JsonUploaderError:
@@ -179,8 +177,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tournament-id",
         type=int,
-        required=True,
-        help="Existing public.Tournament.id to associate with the uploaded matches.",
+        default=None,
+        help=(
+            "Existing public.Tournament.id to associate with the uploaded matches. "
+            "If omitted, uses whichever tournament is currently marked active."
+        ),
     )
     parser.add_argument(
         "--allow-incomplete-teams",
@@ -198,13 +199,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     matches = parse_matches_json(args.json_data) if args.json_data else read_matches(args.json)
+    tournament_id = args.tournament_id if args.tournament_id is not None else fetch_active_tournament_id()
 
     total_players = 0
     skipped_matches = 0
     for match_payload in matches:
         uploaded_game_id, player_count, skipped = upload_match(
             match_payload=match_payload,
-            tournament_id=args.tournament_id,
+            tournament_id=tournament_id,
             strict_teams=not args.allow_incomplete_teams,
             force=args.force_insert_player_matches,
         )
