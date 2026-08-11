@@ -169,36 +169,40 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: `tournament_id ${tournamentId} no existe.` }, 404);
   }
 
-  if (!body.force) {
-    const { data: existingPlayers, error: existingError } = await supabase
-      .from("player_match")
-      .select("id")
-      .eq("match_id", gameId)
-      .limit(1);
-
-    if (existingError) return jsonResponse({ error: existingError.message }, 500);
-    if (existingPlayers && existingPlayers.length > 0) {
-      return jsonResponse({ ok: true, gameId, skipped: true, playerRows: 0 });
-    }
-  }
-
-  const { error: upsertError } = await supabase
+  const { error: upsertMatchError } = await supabase
     .from("match")
     .upsert(
       { game_id: gameId, game_length: match.gameLength ?? null, tournament: tournamentId },
       { onConflict: "game_id" },
     );
 
-  if (upsertError) return jsonResponse({ error: upsertError.message }, 500);
+  if (upsertMatchError) return jsonResponse({ error: upsertMatchError.message }, 500);
 
   const rows = match.teams.flatMap((team) =>
     team.players.map((player) => mapPlayerMatch(player, team, gameId))
   );
 
-  if (rows.length > 0) {
-    const { error: insertError } = await supabase.from("player_match").insert(rows);
-    if (insertError) return jsonResponse({ error: insertError.message }, 500);
+  if (rows.length === 0) {
+    return jsonResponse({ ok: true, gameId, skipped: false, playerRows: 0 });
   }
 
-  return jsonResponse({ ok: true, gameId, skipped: false, playerRows: rows.length });
+  // Upsert atomico en vez de "chequear y despues insertar": varias
+  // instancias de LoL Centinela (una por jugador) suben la MISMA partida en
+  // paralelo, casi al mismo tiempo, porque el evento de fin de partida les
+  // dispara a todas juntas. Un chequeo previo desde la app es racy -- dos
+  // requests pueden pasar el chequeo antes de que cualquiera haya escrito.
+  // La constraint unique (match_id, player_puuid) + ON CONFLICT hace que
+  // Postgres serialice esto de verdad a nivel de fila, sin duplicar.
+  const { data: writtenRows, error: insertError } = await supabase
+    .from("player_match")
+    .upsert(rows, {
+      onConflict: "match_id,player_puuid",
+      ignoreDuplicates: !body.force,
+    })
+    .select("id");
+
+  if (insertError) return jsonResponse({ error: insertError.message }, 500);
+
+  const playerRows = writtenRows?.length ?? 0;
+  return jsonResponse({ ok: true, gameId, skipped: playerRows === 0, playerRows });
 });
