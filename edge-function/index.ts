@@ -5,11 +5,13 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 interface RiotPlayer {
+  // puuid/riotId quedan opcionales a proposito: los bots de partidas ARAM
+  // (el formato que juega esta comunidad) no tienen puuid ni Riot ID real.
   puuid?: string;
   riotIdGameName?: string;
   riotIdTagLine?: string;
-  championName?: string;
-  stats?: Record<string, number>;
+  championName: string;
+  stats: Record<string, number>;
 }
 
 interface RiotTeam {
@@ -19,7 +21,7 @@ interface RiotTeam {
 
 interface MatchPayload {
   gameId: number | string;
-  gameLength?: number;
+  gameLength: number;
   teams: RiotTeam[];
 }
 
@@ -82,7 +84,7 @@ function mapPlayerMatch(player: RiotPlayer, team: RiotTeam, gameId: string) {
     player_puuid: player.puuid ?? null,
     current_name: playerName(player),
     team: teamName(team),
-    champion: player.championName ?? null,
+    champion: player.championName,
     kills: stat(player, "CHAMPIONS_KILLED"),
     deaths: stat(player, "NUM_DEATHS"),
     assist: stat(player, "ASSISTS"),
@@ -106,18 +108,27 @@ function mapPlayerMatch(player: RiotPlayer, team: RiotTeam, gameId: string) {
 }
 
 function validateMatchPayload(match: MatchPayload): void {
-  if (!Array.isArray(match.teams)) {
-    throw new Error("match.teams debe ser una lista.");
+  if (typeof match.gameLength !== "number" || match.gameLength < 0) {
+    throw new Error("match.gameLength es obligatorio y debe ser un numero >= 0.");
   }
-  match.teams.forEach((team, index) => {
-    if (!Array.isArray(team.players)) {
-      throw new Error(`match.teams[${index}].players debe ser una lista.`);
-    }
-    if (team.players.length < 1 || team.players.length > 5) {
+  if (!Array.isArray(match.teams) || match.teams.length === 0) {
+    throw new Error("match.teams debe ser una lista con al menos un equipo.");
+  }
+  match.teams.forEach((team, teamIndex) => {
+    if (!Array.isArray(team.players) || team.players.length < 1 || team.players.length > 5) {
       throw new Error(
-        `match.teams[${index}].players debe tener entre 1 y 5 jugadores, tiene ${team.players.length}.`,
+        `match.teams[${teamIndex}].players debe tener entre 1 y 5 jugadores.`,
       );
     }
+    team.players.forEach((player, playerIndex) => {
+      const path = `match.teams[${teamIndex}].players[${playerIndex}]`;
+      if (typeof player.championName !== "string" || !player.championName.trim()) {
+        throw new Error(`${path}.championName es obligatorio.`);
+      }
+      if (!player.stats || typeof player.stats !== "object") {
+        throw new Error(`${path}.stats es obligatorio.`);
+      }
+    });
   });
 }
 
@@ -172,7 +183,7 @@ Deno.serve(async (req: Request) => {
   const { error: upsertMatchError } = await supabase
     .from("match")
     .upsert(
-      { game_id: gameId, game_length: match.gameLength ?? null, tournament: tournamentId },
+      { game_id: gameId, game_length: match.gameLength, tournament: tournamentId },
       { onConflict: "game_id" },
     );
 
